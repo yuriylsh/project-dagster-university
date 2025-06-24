@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-import duckdb
+from dagster_duckdb import DuckDBResource
 import os
 import pandas as pd
 import dagster as dg
@@ -39,7 +39,7 @@ def taxi_zones_file() -> None:
 @dg.asset(
     deps=["taxi_trips_file"]
 )
-def taxi_trips() -> None:
+def taxi_trips(database: DuckDBResource) -> None:
     """
       The raw taxi trips dataset, loaded into a DuckDB database
     """
@@ -60,21 +60,14 @@ def taxi_trips() -> None:
         );
     """
 
-    conn = backoff(
-        fn=duckdb.connect,
-        retry_on=(RuntimeError, duckdb.IOException),
-        kwargs={
-            "database": os.getenv("DUCKDB_DATABASE"),
-        },
-        max_retries=10,
-    )
-    conn.execute(query)
+    with database.get_connection() as conn:
+        conn.execute(query)
 
     
 @dg.asset(
     deps=["taxi_zones_file"]
 )
-def taxi_zones() -> None:
+def taxi_zones(database: DuckDBResource) -> None:
     """
       The raw taxi zones dataset, loaded into a DuckDB database. Sourced from the NYC Open Data portal.
     """
@@ -89,29 +82,13 @@ def taxi_zones() -> None:
         );
     """
 
-    conn = backoff(
-        fn=duckdb.connect,
-        retry_on=(RuntimeError, duckdb.IOException),
-        kwargs={
-            "database": os.getenv("DUCKDB_DATABASE"),
-        },
-        max_retries=10,
-    )
-    conn.execute(query)
+    with database.get_connection() as conn:
+        conn.execute(query)
 
 @dg.asset(
   deps=["taxi_trips"]
 )
-def trips_by_week() -> None:
-    conn = backoff(
-        fn=duckdb.connect,
-        retry_on=(RuntimeError, duckdb.IOException),
-        kwargs={
-            "database": os.getenv("DUCKDB_DATABASE"),
-        },
-        max_retries=10,
-    )
-
+def trips_by_week(database: DuckDBResource) -> None:
     current_date = datetime.strptime("2023-03-01", constants.DATE_FORMAT)
     end_date = datetime.strptime("2023-04-01", constants.DATE_FORMAT)
 
@@ -126,7 +103,8 @@ def trips_by_week() -> None:
             where date_trunc('week', pickup_datetime) = date_trunc('week', '{current_date_str}'::date)
         """
 
-        data_for_week = conn.execute(query).fetch_df()
+        with database.get_connection() as conn:
+            data_for_week = conn.execute(query).fetch_df()
 
         aggregate = data_for_week.agg({
             "vendor_id": "count",
